@@ -3,181 +3,273 @@
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](LICENSE)
 [![Commercial License Available](https://img.shields.io/badge/Commercial%20License-Available-blue.svg)](LICENSE-COMMERCIAL.md)
 
-**Claude Code にソフトウェア開発ライフサイクル（SDLC）の規律を強制する、スキル・エージェント・フックのセット。**
+**仕様書を中心に、ソフトウェア開発ライフサイクルを規律正しく進める Claude Code スキルセット。**
 
-AI エージェントに開発を任せる際、「仕様 → 設計 → TDD → レビュー → デプロイ」のプロセスを守らせ、
-本番 DB 消失や force push などの**致命的な操作を物理的にブロック**します。
+Claude Code に `/spec`, `/architect`, `/tdd`, `/review`, `/deploy` などの専門スキルを追加し、  
+「仕様の定義 → 設計 → 実装 → 検証」のプロセスを一貫して守りながら開発を駆動します。
+
+---
+
+## 基本的な考え方
+
+AI エージェントはコードを速く書けます。しかし**「何を作るか」を自ら定義したり、プロセスを守り続けたりすることは苦手です**。
+
+そのために必要なのは、ルールを書いて渡すことではなく、**仕様を先に明文化し、その仕様がすべてのフェーズを駆動する構造**です。
+
+このスキルセットの中心にあるのは `SPEC.md` という仕様書ファイルです。
+
+```
+ユーザーのリクエスト
+  ↓
+SPEC.md を作成（目的・振る舞い・受け入れ条件・変更禁止要件）
+  ↓
+SPEC.md を唯一の根拠として各フェーズが順に実行される
+  ↓
+完了時に SPEC.md の受け入れ条件を一つずつ照合する
+```
+
+コードは仕様の実現にすぎません。先に仕様を書く。これだけが原則です。
+
+---
+
+## SPEC.md が開発を駆動する仕組み
+
+### 1. 仕様書は git で管理される
+
+`/spec` スキルが `SPEC.md` を作成し、プロジェクトの git リポジトリにコミットします。  
+以降のすべてのフェーズは、この SPEC.md に追記しながら進みます。
+
+```markdown
+# [機能名] 仕様書
+
+## 目的
+なぜこの変更が必要か
+
+## 振る舞い
+何をするか（入力 → 処理 → 出力）
+
+## 受け入れ条件
+- [ ] POST /api/upload に PDF を送ると Markdown が返る（200）
+- [ ] 無効ファイルを送ると HTTP 422 が返る
+
+## 固定要件
+<!-- 技術的判断で変更してはならない要件。後続エージェントはここを必ず読むこと -->
+- ベースイメージ: python:3.12-slim
+
+---
+<!-- 以下は後続フェーズが追記するセクション -->
+## アーキテクチャ設計  ← /architect が追記
+## テスト計画          ← /tdd が追記
+## レビュー結果        ← /review が追記
+## デプロイ計画        ← /deploy が追記
+```
+
+### 2. すべてのサブエージェントは SPEC.md 全文を受け取る
+
+各スキルは独立した subagent として実行されます。  
+`/sdlc` オーケストレーターは、SPEC.md の**全文を省略なしで**各サブエージェントに渡します。  
+要約・省略・解釈は禁止です。仕様書そのものが引き継がれます。
+
+### 3. 固定要件は変更不可
+
+`## 固定要件` セクションに書かれた内容は、後続のどのフェーズも技術的判断で変更できません。  
+満たせない場合は、自己判断で代替案を採用せずユーザーに報告して承認を得ます。
+
+### 4. 品質ゲートを経て次のフェーズへ
+
+| ゲート | 確認事項 |
+|---|---|
+| 仕様 → 設計 | SPEC.md が存在し、固定要件が明記され、ユーザーが承認している |
+| 設計 → 実装 | アーキテクチャが SPEC.md に記録されている |
+| 実装 → レビュー | テストが通り、テスト計画が SPEC.md に記録されている |
+| レビュー → デプロイ | 指摘がすべて解決され、SPEC.md に記録されている |
+| デプロイ → 完了 | SPEC.md の全受け入れ条件を照合済み |
+
+各ゲートではユーザーの承認を求めます。承認なしに次フェーズへは進みません。
+
+### 5. 完了は受け入れ条件との照合で判断する
+
+「動いた」「ヘルスチェックが通った」では完了にしません。  
+SPEC.md の `## 受け入れ条件` を一つずつ確認コマンドで照合し、結果を記録します。
+
+---
+
+## 全体の流れ
+
+```
+User
+  ↓ claude --agent supervisor
+  ↓
+Supervisor（意図の分類・危険信号の検知・承認確認）
+  ↓
+/sdlc オーケストレーター
+  ↓
+  [0] SPEC.md の確認（なければ /spec で作成・git commit）
+  ↓
+  [1] タスク分析と実行計画の提示（ユーザー承認）
+  ↓
+  [2] 各フェーズをサブエージェントで順次実行
+      /spec      → SPEC.md 作成・確定
+      /architect → アーキテクチャ設計を SPEC.md に追記
+      /tdd       → テスト計画・実装を SPEC.md に追記
+      /review    → レビュー結果を SPEC.md に追記
+      /deploy    → デプロイ計画を SPEC.md に追記
+  ↓
+  [3] SPEC.md の受け入れ条件を照合して完了確認
+```
+
+各フェーズは `context: fork` で隔離実行されるため、コンテキストが汚染されません。  
+フェーズ間のコミュニケーションは SPEC.md と git を経由します。
+
+---
+
+## 含まれるスキル（12個）
+
+| スキル | 役割 | SPEC.md への貢献 |
+|---|---|---|
+| `/sdlc` | オーケストレーター | SPEC.md 全体の進行管理・完了照合 |
+| `/spec` | 仕様定義 | SPEC.md を新規作成・ベース確定 |
+| `/architect` | アーキテクチャ設計 + ADR | `## アーキテクチャ設計` を追記 |
+| `/tdd` | テスト駆動開発 | `## テスト計画` を追記・更新 |
+| `/review` | コードレビュー | `## レビュー結果` を追記 |
+| `/ui` | UI/UX 設計 + React 実装 | `## UI/UX 設計` を追記 |
+| `/deploy` | デプロイ検証 + ロールバック計画 | `## デプロイ計画` を追記 |
+| `/security` | 脆弱性分析・脅威モデリング | `## セキュリティ検証` を追記 |
+| `/sre` | SLO/SLI・障害対応 | `## SLO/信頼性要件` を追記 |
+| `/observe` | ログ・メトリクス・トレース設計 | `## オブザーバビリティ設計` を追記 |
+| `/ddd` | ドメイン駆動設計 | `## ドメインモデル` を追記 |
+| `/refactor` | リファクタリング | `## リファクタリング記録` を追記 |
+
+---
 
 ## Quick Start
 
 ```bash
-# dgx_spark_code リポジトリの一部として配布されています
-git clone https://github.com/nob-git-dev/dgx_spark_code.git
-cd dgx_spark_code/claude-sdlc-skills
+git clone https://github.com/nob-git-dev/claude-skills.git
+cd claude-skills/sdlc-skills
 ./scripts/install.sh
 ```
 
-サブディレクトリだけ取得したい場合は [sparse-checkout](https://git-scm.com/docs/git-sparse-checkout) を利用できます:
-
-```bash
-git clone --no-checkout https://github.com/nob-git-dev/dgx_spark_code.git
-cd dgx_spark_code
-git sparse-checkout init --cone
-git sparse-checkout set claude-sdlc-skills
-git checkout main
-cd claude-sdlc-skills
-./scripts/install.sh
-```
-
-次に `~/.claude/settings.json` に以下を追加:
+`~/.claude/settings.json` にフックと Supervisor を追加（テンプレート: `hooks/settings-snippet.json`）：
 
 ```json
 {
   "agent": "supervisor",
   "hooks": {
     "PreToolUse": [
-      { "matcher": "Bash", "hooks": [{"type": "command", "command": "/Users/YOUR_USER/.claude/hooks/guard-bash.sh", "timeout": 3}] },
-      { "matcher": "Write|Edit", "hooks": [{"type": "command", "command": "/Users/YOUR_USER/.claude/hooks/guard-write.sh", "timeout": 3}] }
+      { "matcher": "Bash",       "hooks": [{"type": "command", "command": "~/.claude/hooks/guard-bash.sh",  "timeout": 3}] },
+      { "matcher": "Write|Edit", "hooks": [{"type": "command", "command": "~/.claude/hooks/guard-write.sh", "timeout": 3}] }
     ],
     "UserPromptSubmit": [
-      { "hooks": [{"type": "command", "command": "/Users/YOUR_USER/.claude/hooks/suggest-sdlc.sh", "timeout": 3}] }
+      { "hooks": [{"type": "command", "command": "~/.claude/hooks/suggest-sdlc.sh", "timeout": 3}] }
     ]
   }
 }
 ```
 
-> `hooks/settings-snippet.json` にテンプレートがあります。`YOUR_USER` を置換してください。
+次回 `claude` 起動時から Supervisor が常駐し、開発タスクを自動的に `/sdlc` へ誘導します。
 
-これで次回 `claude` 起動時から Supervisor が常駐し、開発タスクを自動で `/sdlc` オーケストレーターに誘導します。
+特定のスキルだけ取得したい場合は sparse-checkout が使えます：
 
-## 何が得られるか
+```bash
+git clone --no-checkout https://github.com/nob-git-dev/claude-skills.git
+cd claude-skills
+git sparse-checkout init --cone
+git sparse-checkout set sdlc-skills
+git checkout main
+cd sdlc-skills
+./scripts/install.sh
+```
 
-### 1. プロセスの強制
+---
 
-ユーザーが「機能を追加したい」と言うだけで、Supervisor が:
+## 安全のための補助機能
 
-1. タスク種別を分類（新機能 / バグ修正 / リファクタ / UI / 障害対応）
-2. 危険信号（削除・本番・マイグレーション等）を検知
-3. `/sdlc` オーケストレーター経由で適切なフェーズを順次実行:
-   - `/spec`（仕様） → `/architect`（設計＋ADR） → `/tdd`（テスト駆動） → `/review`（品質ゲート）
-4. 各フェーズ完了時にユーザー承認を求める
+仕様書プロセスとは別に、物理的なガードレールも含まれています。
 
-### 2. 致命的操作の物理ブロック
-
-PreToolUse フックが、Claude がツール実行する**直前**に以下をブロック:
+PreToolUse フックが Claude のツール実行直前に以下をブロックします：
 
 | カテゴリ | 例 |
 |---|---|
 | DB 破壊操作 | `DROP TABLE`, `TRUNCATE`, WHERE 句なし DELETE/UPDATE |
-| 本番 DB 接続 | `psql ... *_prod` 等 |
-| ファイルシステム破壊 | `rm -rf /`, `rm -rf ~`, システムディレクトリ削除 |
-| 危険な Git 操作 | `main/master` への force push, `reset --hard`, `clean -f`, `branch -D` |
-| 昇格 | `sudo`（Claude からの実行を禁止） |
-| 機密情報露出 | `.env` / `.pem` / `.key` の書き込み、API キー混入、全環境変数ダンプ |
+| 本番 DB 接続 | `psql ... *_prod` |
+| ファイルシステム破壊 | `rm -rf /`, `rm -rf ~` |
+| 危険な Git 操作 | `main/master` への force push, `reset --hard`, `clean -f` |
+| 権限昇格 | Claude からの `sudo` 実行 |
+| 機密情報露出 | `.env` / `.pem` への書き込み、API キー混入 |
 
-### 3. 学習するサブエージェント
+> これは最終防衛線です。完全な保護ではありません（[詳細](docs/pretooluse-guards.md)）。
 
-`review`, `deploy`, `ddd` は `memory: project` 付きのサブエージェント版も提供。
-プロジェクト固有のパターン・ユビキタス言語・デプロイ履歴を蓄積し、時間と共に精度が上がります。
+---
+
+## 設計原則
+
+1. **仕様を先に書く** — 実装の前に SPEC.md を作成し、git にコミットする
+2. **仕様書が唯一の根拠** — サブエージェントは SPEC.md 全文を受け取り、それだけを根拠に動く
+3. **プロセスは構造で強制する** — ルールを書くのではなく、フェーズと品質ゲートで担保する
+4. **完了は照合で確認する** — 受け入れ条件を一つずつ検証してから完了とする
+5. **原典に基づく** — Uncle Bob, Kent Beck, Fowler, Evans, Google SRE の方法論
+
+---
 
 ## 構成
 
 ```
-.
-├── skills/         12 個のスキル（SDLC の各フェーズ）
-│   ├── sdlc/       オーケストレーター
-│   ├── spec/       仕様定義
-│   ├── architect/  アーキテクチャ設計 + ADR
-│   ├── tdd/        テスト駆動開発
-│   ├── ui/         UI/UX 設計 + React
-│   ├── review/     コードレビュー
-│   ├── deploy/     デプロイメント
-│   ├── sre/        SLO/SLI/障害対応
-│   ├── observe/    オブザーバビリティ
-│   ├── security/   セキュリティ（OWASP + STRIDE）
-│   ├── ddd/        ドメイン駆動設計
-│   └── refactor/   リファクタリング
-├── agents/         4 個のサブエージェント
-│   ├── supervisor.md  セッション常駐の監視役
-│   ├── review.md      memory 付き拡張版
-│   ├── deploy.md      memory + 権限モード付き拡張版
-│   └── ddd.md         memory で用語集永続化
-├── hooks/          3 個のフック
-│   ├── guard-bash.sh      PreToolUse: Bash 危険操作ブロック
-│   ├── guard-write.sh     PreToolUse: Write/Edit 危険操作ブロック
-│   └── suggest-sdlc.sh    UserPromptSubmit: 開発タスク誘導
-├── scripts/
-│   └── install.sh
+sdlc-skills/
+├── skills/     12 個のスキル（SDLC 各フェーズ）
+├── agents/     4 個のサブエージェント（Supervisor / review / deploy / ddd）
+├── hooks/      3 個のフック（guard-bash / guard-write / suggest-sdlc）
+├── scripts/    install.sh
 └── docs/
-    ├── design-decisions.md     設計判断の記録
-    └── pretooluse-guards.md    PreToolUse ガード仕様
+    ├── design-decisions.md    設計判断の記録
+    └── pretooluse-guards.md   ガード仕様
 ```
 
-## アーキテクチャ
-
-```
-User
-  ↓ claude --agent supervisor
-  ↓
-Supervisor Agent (常駐、memory: project)
-  ├ 意図を分類（開発か？雑談か？危険か？）
-  ├ 危険信号検知（削除・本番・マイグレーション）
-  └ 承認後に /sdlc を起動
-        ↓
-      /sdlc (オーケストレーター、メインコンテキスト)
-        ├ タスク種別に応じてフローを決定
-        └ Skill ツールで専門スキルを順次起動
-              ↓
-            /spec, /architect, /tdd, /ui, /review, ... (subagent, 隔離実行)
-                  ↓
-                [ツール実行前] PreToolUse Guards
-                  ├ guard-bash.sh: 危険な Bash コマンドをブロック
-                  └ guard-write.sh: 危険な書き込みをブロック
-```
-
-## 設計原則
-
-1. **本質を書く** — 特定のコマンドや手順ではなく、方法論と行動原則
-2. **原典に基づく** — Uncle Bob, Kent Beck, Fowler, Evans, Google SRE 等
-3. **汎用** — どのプロジェクト・言語・フレームワークでも適用可能
-4. **3 層防御** — Supervisor + Hooks + PreToolUse、単一の仕組みに依存しない
-5. **500 行以内** — 公式推奨に従い、詳細はサポートファイルに分離可能
+---
 
 ## なぜこれを作ったか
 
-AI エージェントに開発を任せていたプロジェクトで、本番データベースのデータ全消失事故を**短期間に 2 回**経験しました。
-`CLAUDE.md` にルールを書いても、メモリに記録しても、AI の「うっかり」は防げませんでした。
+AI エージェントに開発を任せる中で、本番データベースの全消失を 2 回経験しました。  
+`CLAUDE.md` にルールを書いても、メモリに記録しても防げませんでした。
 
-ルールではなく**構造でプロセスを強制する**必要がある — それが本リポジトリの出発点です。
+根本原因は「**何を作るかを定義せずに、実装だけを依頼していた**」ことでした。
+
+仕様がなければ、エージェントは自己判断で補完します。  
+それが「削除してよいか」「どの DB に接続すべきか」に及べば、事故になります。
+
+仕様書を先に書き、それをすべてのフェーズが守る構造にする — それが本スキルセットの出発点です。  
 詳細は [`docs/design-decisions.md`](docs/design-decisions.md) を参照してください。
 
-## 注意事項
-
-- **`install.sh` は既存の `~/.claude/skills/`, `~/.claude/agents/`, `~/.claude/hooks/` を上書きします**。
-  実行前に `.backup-YYYYMMDD-HHMMSS/` に自動バックアップされますが、重要な独自スキルがある場合は事前確認してください。
-- **PreToolUse ガードの正規表現には誤検知と見逃しの両方があります**（[`docs/pretooluse-guards.md`](docs/pretooluse-guards.md) 参照）。
-  完全な保護ではなく「最終防衛線」として位置付けてください。
-- **対応スタンス**: 個人プロジェクト、ベストエフォートでの保守。Issue / PR 歓迎。
+---
 
 ## 動作確認済み環境
 
-- macOS (Apple Silicon)
+- macOS (Apple Silicon) / Linux (aarch64 含む)
 - Claude Code v2.1 以降
-- bash, jq（macOS/Linux 標準）
+- bash, jq（標準インストール済み前提）
+
+---
+
+## 注意事項
+
+- **`install.sh` は既存の `~/.claude/skills/`, `~/.claude/agents/`, `~/.claude/hooks/` を上書きします。**  
+  実行前に `.backup-YYYYMMDD-HHMMSS/` へ自動バックアップされますが、重要な独自スキルがある場合は事前確認してください。
+- 個人プロジェクト・ベストエフォート保守。Issue / PR 歓迎。
+
+---
 
 ## ライセンス
-
-**デュアルライセンス構成**
 
 | 利用目的 | ライセンス |
 |---|---|
 | 個人・研究・非営利・OSS（同ライセンスで公開） | [CC BY-NC-SA 4.0](LICENSE)（無償） |
 | 営利企業での利用・商用サービスへの組み込み | [商用ライセンス](LICENSE-COMMERCIAL.md)（要申請） |
 
-商用ライセンスのお問い合わせは [GitHub Issues](https://github.com/nob-git-dev/dgx_spark_code/issues) へ（タイトルに `[Commercial License]` を付けてください）。
+商用ライセンスのお問い合わせ: [GitHub Issues](https://github.com/nob-git-dev/claude-skills/issues)（タイトルに `[Commercial License]`）
+
+---
 
 ## 関連ドキュメント
 
 - [設計判断の記録](docs/design-decisions.md)
 - [PreToolUse ガード仕様](docs/pretooluse-guards.md)
-- 各スキル/エージェント/フックの内部 `.md` ファイル

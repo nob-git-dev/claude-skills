@@ -55,17 +55,62 @@ echo ""
 echo "================================"
 echo "インストール完了"
 echo ""
-echo "有効化するための手動作業:"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo " 最後に1つだけ手動作業があります"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "1. Supervisor の常駐化:"
-echo "   $CLAUDE_DIR/settings.json に追加:"
-echo "     \"agent\": \"supervisor\""
+echo " $CLAUDE_DIR/settings.json を開いて、"
+echo " 以下の内容を追加してください。"
 echo ""
-echo "2. PreToolUse ガードの有効化:"
-echo "   $REPO_DIR/hooks/settings-snippet.json を参考に"
-echo "   $CLAUDE_DIR/settings.json の hooks.PreToolUse にマージしてください"
-echo "   （YOUR_USER を実際のユーザー名に置換）"
+echo " ※ settings.json がまだない場合は、"
+echo "   このファイルをそのまま新規作成してください。"
 echo ""
-echo "3. 起動時指定で試す場合:"
-echo "   claude --agent supervisor"
+echo "-------- ここからコピー --------"
+cat << EOF
+{
+  "agent": "supervisor",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_DIR/hooks/guard-bash.sh",
+            "timeout": 3
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_DIR/hooks/guard-write.sh",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_DIR/hooks/suggest-sdlc.sh",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+echo "-------- ここまでコピー --------"
+echo ""
+echo " ※ すでに settings.json に内容がある場合は、"
+echo "   既存の {} の中に \"agent\" と \"hooks\" の部分だけ追加してください。"
+echo ""
+echo " 設定後、次回の claude 起動から有効になります。"
+echo " 動作確認: claude --agent supervisor"
 echo ""
